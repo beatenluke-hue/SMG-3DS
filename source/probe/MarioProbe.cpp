@@ -41,6 +41,8 @@ extern "C" [[noreturn]] void smgFault(ERRF_ExceptionInfo* exception, CpuRegister
                  static_cast<unsigned long>(registers->pc), static_cast<unsigned long>(exception->far),
                  static_cast<unsigned long>(registers->lr), static_cast<unsigned long>(registers->sp));
     logCallers();
+    std::fputs("\n-- take a photo of this screen --\n", stderr);
+    svcSleepThread(60000000000LL);  // screen-log build: hold the message for a minute
     svcExitProcess();
 }
 
@@ -50,6 +52,8 @@ extern "C" void smgCatchFaults() { threadOnException(smgFault, RUN_HANDLER_ON_FA
 // exit would unmount the SD card under the game's own threads (the DVD worker, mid-read), so a stop ends at once.
 extern "C" [[noreturn]] void __wrap_abort() {
     logCallers();
+    std::fputs("\n-- take a photo of this screen --\n", stderr);
+    svcSleepThread(60000000000LL);  // screen-log build: hold the message for a minute
     svcExitProcess();
 }
 
@@ -67,9 +71,8 @@ int main() {
     smgCatchFaults();
     gfxInitDefault();
     consoleInit(GFX_BOTTOM, nullptr);  // the top screen is the game's
-    // consoleInit takes stderr for the screen too; stops belong in the log, which outlives the app.
-    consoleDebugInit(debugDevice_SVC);
-    std::printf("SMG boot bring-up\n");
+    consoleDebugInit(debugDevice_CONSOLE);  // screen-log build: stderr stays on the bottom screen
+    std::printf("SMG boot bring-up (screen-log build)\n");
     std::fprintf(stderr, "mario-probe: application memory %lu KiB, %lu KiB free\n", osGetMemRegionSize(MEMREGION_APPLICATION) / 1024,
                  osGetMemRegionFree(MEMREGION_APPLICATION) / 1024);
     std::fprintf(stderr, "mario-probe: entering the game's main\n");
