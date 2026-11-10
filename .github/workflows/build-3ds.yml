@@ -1,0 +1,28 @@
+name: Build 3DS
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Same pinned devkitARM image tools/build-3ds.sh uses
+    container: devkitpro/devkitarm@sha256:116afba8df8453961de2936ffab20dd441edf4d682856c1ec8b0e53d7ed0bbf5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE="$PWD/tools/3ds-toolchain.cmake" -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Upload .3dsx
+        uses: actions/upload-artifact@v4
+        with:
+          name: smg-3ds
+          path: build/*.3dsx
+          if-no-files-found: error
