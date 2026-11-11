@@ -107,6 +107,19 @@ its speeds (`motion_speed`, `stick_speed`, `invert_x`, `invert_y`) and the butto
 `jump spin crouch shoot camera recenter pause minus`). The `dev.` lines in `source/core/Settings.cpp` switch on
 diagnostics, and `dev.galaxy` starts straight in a galaxy.
 
+**Speed settings** (`perf.` lines, all on by default; `include/smg/Settings.hpp` documents each):
+
+| Line | Default | What it does |
+| --- | --- | --- |
+| `perf.gpu_overlap=0` | on | Runs each part of a frame on the GPU as it's split off (the old `docs/untested/gpu-overlap.diff`). Turn off if the console freezes. |
+| `perf.mesh_cull=0` | on | Skips cached meshes wholly off the screen. Turn off if level pieces vanish at the screen's edges. |
+| `perf.max_texture=N` | 256 | Halves larger textures until they fit. 1024 keeps them all. |
+| `perf.draw_distance=P` | 60 | Actors' far-clip distances, in percent of the game's. |
+| `perf.lod_distance=P` | 50 | Where actors switch to their middle and low models, in percent. |
+| `perf.shadow_distance=M` | 20 | Actors' shadows end M meters away (0 none, -1 the game's own). Mario's shadow is unaffected. |
+
+`dev.perf_log=1` appends every perf block to `sdmc:/3ds/SMG-3DS/perf.log`, written by a low-priority thread.
+
 ## How it was tested
 
 - **Host tests** (`tools/test-host.sh`) under ASan and UBSan with recovery off. `native_validation.3dsx` runs the same
