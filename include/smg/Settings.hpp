@@ -58,6 +58,14 @@ struct Settings {
     // For development only (dev.perf_log=1): the renderer's perf lines are also written to sdmc:/3ds/SMG-3DS/perf.log,
     // whole, where the bottom screen shows only their last lines.
     bool devPerfLog = false;
+    // Speed-ups, on unless set to 0. perf.gpu_overlap=0: the GPU starts on a frame only at its end, as before (each part
+    // split off at an EFB copy otherwise runs at once). perf.mesh_cull=0: cached meshes wholly off the target are drawn
+    // anyway.
+    bool perfGpuOverlap = true;
+    bool perfMeshCull = true;
+    // perf.max_texture=N (8-1024, a power of two): the game's textures wider or taller are halved, averaging each 2x2,
+    // until they fit, for the PICA's small texture cache and the linear heap. 1024 keeps them all as they are.
+    int perfMaxTexture = 256;
     // For development only (dev.av_sync=1): every 90th drawn frame gets a white square and the audio a click at the
     // same moment, to measure the port's sound against its picture in a recording.
     bool devAvSync = false;

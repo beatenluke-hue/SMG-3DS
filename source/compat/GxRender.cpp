@@ -47,27 +47,68 @@ extern "C" int smgDevGxNoRaw();
 extern "C" int smgDevGxMips();
 extern "C" int smgDevGxZones();
 extern "C" int smgDevPerfLog();
+extern "C" int smgPerfGpuOverlap();  // perf.gpu_overlap
+extern "C" int smgPerfMeshCull();    // perf.mesh_cull
+extern "C" int smgPerfMaxTexture();  // perf.max_texture
 
 namespace {
-// The perf lines: to stderr as always, and with dev.perf_log=1 also appended to the SD card, flushed once per block.
-FILE* perfLogFile() {
-    static FILE* file = smgDevPerfLog() ? std::fopen("sdmc:/3ds/SMG-3DS/perf.log", "a") : nullptr;
-    return file;
+// The perf lines: to stderr as always, and with dev.perf_log=1 also gathered and appended to the SD card by a thread of
+// its own at the lowest priority. The render thread never writes the card itself: that cost a real 3DS ~150 ms.
+struct PerfLog {
+    LightLock lock;
+    LightEvent ready;
+    std::string pending, writing;
+    FILE* file = nullptr;
+};
+PerfLog* perfLog() {
+    static PerfLog* log = [] {
+        if (!smgDevPerfLog()) return static_cast<PerfLog*>(nullptr);
+        auto* made = new PerfLog;
+        LightLock_Init(&made->lock);
+        LightEvent_Init(&made->ready, RESET_ONESHOT);
+        made->file = std::fopen("sdmc:/3ds/SMG-3DS/perf.log", "a");
+        if (!made->file || !threadCreate(
+                               [](void* arg) {
+                                   auto* log = static_cast<PerfLog*>(arg);
+                                   for (;;) {
+                                       LightEvent_Wait(&log->ready);
+                                       LightLock_Lock(&log->lock);
+                                       log->writing.swap(log->pending);
+                                       LightLock_Unlock(&log->lock);
+                                       std::fwrite(log->writing.data(), 1, log->writing.size(), log->file);
+                                       std::fflush(log->file);
+                                       log->writing.clear();
+                                   }
+                               },
+                               made, 0x2000, 0x3F, -2, true))
+            return static_cast<PerfLog*>(nullptr);
+        return made;
+    }();
+    return log;
 }
+std::string perfLines;  // the render thread's block so far
 [[gnu::format(printf, 1, 2)]] void perfPrint(const char* format, ...) {
     va_list arguments;
     va_start(arguments, format);
-    if (FILE* file = perfLogFile()) {
+    if (perfLog()) {
         va_list copy;
         va_copy(copy, arguments);
-        std::vfprintf(file, format, copy);
+        char line[1024];
+        const int length = std::vsnprintf(line, sizeof line, format, copy);
         va_end(copy);
+        if (length > 0) perfLines.append(line, std::min<std::size_t>(std::size_t(length), sizeof line - 1));
     }
     std::vfprintf(stderr, format, arguments);
     va_end(arguments);
 }
 void perfLogFlush() {
-    if (FILE* file = perfLogFile()) std::fflush(file);
+    PerfLog* log = perfLog();
+    if (!log || perfLines.empty()) return;
+    LightLock_Lock(&log->lock);
+    if (log->pending.size() < (1u << 16)) log->pending += perfLines, log->pending += '\n';  // dropped if the card falls far behind
+    LightLock_Unlock(&log->lock);
+    perfLines.clear();
+    LightEvent_Signal(&log->ready);
 }
 } // namespace
 extern "C" void (*smgGpuMemoryChanged)(const void* start, u32 size);  // source/compat/Os.cpp
@@ -113,6 +154,11 @@ constexpr u32 DisplayTransferFlags = GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_
                                      GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO);
 // The target's rows of 8x8 tiles (240 RGBA8 pixels wide) into a 256-wide texture's, in the transfer's 16-byte units.
 constexpr u32 TargetTileRow = 240 * 8 * 4, ScratchTileRow = 256 * 8 * 4;
+
+// citro3d's frame queue, the first member of its context (its internal.h). C3D_FrameBegin stops it and C3D_FrameEnd alone
+// starts it, so the parts of a frame split off at its EFB copies would wait for the whole frame to be built.
+extern "C" char __C3D_Context[];
+gxCmdQueue_s& frameQueue() { return *reinterpret_cast<gxCmdQueue_s*>(__C3D_Context); }
 
 bool sCopiesStayOnGpu = false;
 bool sStepTiming = false;  // dev.gx_timing, read when the renderer is made
@@ -267,6 +313,7 @@ struct Renderer {
         u32 vertexCount = 0, indexCount = 0;
         u32 vertexPhysical = 0, indexPhysical = 0;
         float center[3] = {};  // of its positions' bounds, where its texgens are kept small
+        float low[3] = {}, high[3] = {};  // its positions' bounds, for culling it whole (perf.mesh_cull)
         std::uint16_t slots = 0;
         std::vector<GxMesh::Group> groups;
         u32 lastFrame = 0;  // framesShown when last drawn
@@ -290,6 +337,7 @@ struct Renderer {
         u64 since = 0, syncTicks = 0;
         u32 frames = 0, primitives = 0, vertices = 0, triangles = 0, draws = 0, sameState = 0, color0Rides = 0;
         u32 meshDraws = 0, meshTriangles = 0, meshesMade = 0, citroDraws = 0;
+        u32 meshesCulled = 0, culledIndices = 0, texturesHalved = 0;  // perf.mesh_cull: meshes left undrawn as wholly off the target
         u32 pendingWhy[10] = {};  // mesh draws through citro3d after each kind of change (Pending)
         u32 meshInvalidated = 0, meshOverflows = 0, meshBudgetDrops = 0, meshMismatches = 0, flushesQueued = 0, texturesInvalidated = 0;
         u32 meshesEvicted = 0, meshesDroppedForRoom = 0, leftOutDraws = 0, passDraws = 0, meshesRefreshed = 0, meshVerticesRefreshed = 0;
@@ -813,6 +861,24 @@ struct Renderer {
         retired.clear();
     }
 
+    // The frame's parts so far go to the GPU now, not at the frame's end: a real 3DS's GPU otherwise sat idle while each
+    // frame was built, a third of the castle's frame time.
+    void runSplit() {
+        static const bool overlap = smgPerfGpuOverlap();
+        flushVertices();
+        C3D_FrameSplit(GX_CMDLIST_FLUSH);
+        if (overlap) gxCmdQueueRun(&frameQueue());
+    }
+    // C3D_FrameEnd with the queue idle and stopped, as C3D_FrameBegin left it: a queue still running could finish the display
+    // transfer before C3D_FrameEnd marks the frame to be shown, and the frame would never show.
+    void endFrame() {
+        static const bool overlap = smgPerfGpuOverlap();
+        if (!overlap) return void(C3D_FrameEnd(GX_CMDLIST_FLUSH));
+        gxCmdQueueWait(&frameQueue(), -1);
+        gxCmdQueueStop(&frameQueue());
+        C3D_FrameEnd(GX_CMDLIST_FLUSH);
+    }
+
     // Ends the frame drawn so far without showing it; resume() begins again on the same target once the GPU is done, so
     // the vertex buffer can start over. Inside a frame citro3d's "sync" transfers only queue: readbacks go between.
     void pause() {
@@ -821,7 +887,7 @@ struct Renderer {
         flushVertices();
         C3D_RenderTargetDetachOutput(target);
         fogOff();
-        C3D_FrameEnd(GX_CMDLIST_FLUSH);
+        endFrame();
     }
     void resume() {
         const GxZoneScope zone(ZonePause);
@@ -889,12 +955,36 @@ struct Renderer {
             const float bias = static_cast<std::int8_t>(map.lodBias) / 32.0f;
             if (!withRoom([&] { return upload(texture, chain, (map.minFilter & 3) == 2, bias); })) stop("a texture the PICA takes no memory for");
         } else {
+            static const unsigned cap = unsigned(smgPerfMaxTexture());
+            while (source.image.width > cap || source.image.height > cap) halveImage(source.image, source.image.width > cap, source.image.height > cap), ++perf.texturesHalved;
             const TiledTexture tiled = tile(source);
             if (!withRoom([&] { return upload(texture, tiled); })) stop("a texture the PICA takes no memory for");
         }
         const auto [lo, hi] = textureRange(key);
         markPages(lo, hi, texturePages);
         return texture;
+    }
+
+    // perf.max_texture: an image halved across, down or both, each new texel the average of the two or four it covers
+    // (an odd last row or column is left out).
+    static void halveImage(Image& image, bool across, bool down) {
+        const unsigned w = across && image.width > 1 ? image.width / 2 : image.width, h = down && image.height > 1 ? image.height / 2 : image.height;
+        const unsigned sx = image.width / w, sy = image.height / h;
+        std::vector<std::uint32_t> out(std::size_t(w) * h);
+        for (unsigned y = 0; y < h; ++y)
+            for (unsigned x = 0; x < w; ++x) {
+                unsigned sum[4] = {};
+                for (unsigned dy = 0; dy < sy; ++dy)
+                    for (unsigned dx = 0; dx < sx; ++dx) {
+                        const std::uint32_t c = image.pixels[std::size_t(y * sy + dy) * image.width + x * sx + dx];
+                        for (int k = 0; k < 4; ++k) sum[k] += c >> (24 - 8 * k) & 255;
+                    }
+                const unsigned count = sx * sy;
+                std::uint32_t c = 0;
+                for (int k = 0; k < 4; ++k) c |= std::uint32_t((sum[k] + count / 2) / count) << (24 - 8 * k);
+                out[std::size_t(y) * w + x] = c;
+            }
+        image.width = w, image.height = h, image.pixels = std::move(out);
     }
 
     // Levels for the PICA when the game samples between them (the min filter's low bits) and dev.gx_mips asks for
@@ -1862,6 +1952,7 @@ struct Renderer {
                 for (int c = 0; c < 3; ++c) low[c] = std::min(low[c], position[c]), high[c] = std::max(high[c], position[c]);
             }
             for (int c = 0; c < 3; ++c) cached.center[c] = cached.vertexCount ? (low[c] + high[c]) / 2 : 0;
+            for (int c = 0; c < 3; ++c) cached.low[c] = cached.vertexCount ? low[c] : 0, cached.high[c] = cached.vertexCount ? high[c] : 0;
             // Apart: a list and its arrays sit in different heaps, and one span over both would take in whatever lies between.
             cached.range[0][0] = reinterpret_cast<std::uintptr_t>(list), cached.range[0][1] = cached.range[0][0] + size;
             cached.range[1][0] = reinterpret_cast<std::uintptr_t>(mesh.arraysLo), cached.range[1][1] = reinterpret_cast<std::uintptr_t>(mesh.arraysHi);
@@ -2051,6 +2142,36 @@ struct Renderer {
         }
     }
 
+    // perf.mesh_cull: whether every vertex of a mesh is off the target, its bounds' eight corners all past one edge
+    // of clip space through each slot it uses. The side planes alone: their four half-spaces meet only where w >= 0, so
+    // a mesh behind the camera is past one of them too. Moving meshes' vertices leave their built bounds, so they are
+    // always drawn, as are meshes of several groups (only the first group's slots are in `u`).
+    bool offTarget(const CachedMesh& mesh, const GxMeshUniforms& u) const {
+        static const bool culling = smgPerfMeshCull();
+        if (!culling || mesh.moving || mesh.groups.size() != 1 || !u.slots || !mesh.vertexCount) return false;
+        for (unsigned slot = 0; slot < (u.lit ? unsigned(GxMesh::MaxLitSlots) : 10u); ++slot) {
+            if (!(u.slots >> slot & 1)) continue;
+            float clip[4][4];
+            if (u.lit) {
+                const float* mv = u.modelView[slot];
+                for (int r = 0; r < 4; ++r)
+                    for (int c = 0; c < 4; ++c)
+                        clip[r][c] = u.toClip[r * 4] * mv[c] + u.toClip[r * 4 + 1] * mv[4 + c] + u.toClip[r * 4 + 2] * mv[8 + c] + (c == 3 ? u.toClip[r * 4 + 3] : 0);
+            } else {
+                std::memcpy(clip, u.clip[slot], sizeof clip);
+            }
+            unsigned outside = 0xF;  // past +x, -x, +y, -y for every corner so far
+            for (int k = 0; k < 8 && outside; ++k) {
+                const float p[3] = {k & 1 ? mesh.high[0] : mesh.low[0], k & 2 ? mesh.high[1] : mesh.low[1], k & 4 ? mesh.high[2] : mesh.low[2]};
+                float v[4];
+                for (int r = 0; r < 4; ++r) v[r] = clip[r][0] * p[0] + clip[r][1] * p[1] + clip[r][2] * p[2] + clip[r][3];
+                outside &= (v[0] > v[3] ? 1u : 0u) | (v[0] < -v[3] ? 2u : 0u) | (v[1] > v[3] ? 4u : 0u) | (v[1] < -v[3] ? 8u : 0u);
+            }
+            if (!outside) return false;
+        }
+        return true;
+    }
+
     void drawMesh(const CachedMesh& mesh) {
         drawing = true;
         const struct Release { bool& flag; ~Release() { flag = false; } } release{drawing};
@@ -2065,6 +2186,7 @@ struct Renderer {
         keepTexgensSmall(mesh, u);
         if (dumping) dumpMesh(mesh, u);
         if (u.reject == 3) return;  // GX culls every triangle
+        if (offTarget(mesh, u)) return void(++perf.meshesCulled, perf.culledIndices += mesh.indexCount);
         slotUniforms(u);
         if (u.lit && lightingRowsEpoch != pipeline.lightingEpoch()) {  // the lighting's rows are made of nothing else
             lightingRowsEpoch = pipeline.lightingEpoch();
@@ -2482,6 +2604,8 @@ struct Renderer {
         }
         unsigned long long gameWaits = 0, otherWaits = 0;
         smgCpuWaits(&gameWaits, &otherWaits);
+        perfPrint("gx perf: meshes culled off the target per frame %.1f (%.0f triangles); textures halved %lu\n", perf.meshesCulled / n,
+                  perf.culledIndices / 3.0 / n, static_cast<unsigned long>(perf.texturesHalved));
         perfPrint("gx perf: waits to turn interrupts off, per frame: the game's thread %.2f ms, the others %.2f ms\n",
                      gameWaits * 1000.0 / SYSCLOCK_ARM11 / n, otherWaits * 1000.0 / SYSCLOCK_ARM11 / n);
         perfLogFlush();
@@ -2634,7 +2758,7 @@ struct Renderer {
         roomFor(18);
         // Queued behind the draws so far, as the pass is behind it. Split here with the flush: C3D_SyncTextureCopy's split
         // leaves its part of the command list in the CPU's cache, and a real GPU then read stale words and froze.
-        C3D_FrameSplit(GX_CMDLIST_FLUSH);
+        runSplit();
         // Only the target's tile rows (8 screen columns each) the copy samples, a column either side for the filter.
         const float left = float(copy.x) * 400.0f / frame.width, right = float(copy.x + copy.width) * 400.0f / frame.width;
         // Never none: a transfer of no bytes freezes a real 3DS.
@@ -2995,8 +3119,7 @@ struct Renderer {
         if (!p.texels) stop("copying a depth tile with no memory to copy it into");
         roomInQueue(2);
         flushBatch();
-        flushVertices();
-        C3D_FrameSplit(GX_CMDLIST_FLUSH);
+        runSplit();
         GX_TextureCopy(static_cast<u32*>(target->frameBuf.depthBuf) + tile * 64, GX_BUFFER_DIM(256 / 16, 0), p.texels, GX_BUFFER_DIM(256 / 16, 0), 256,
                        GX_TRANSFER_RAW_COPY(1));
         p.tile = tile, p.begun = framesBegun, p.frame = framesShown;
@@ -3027,7 +3150,7 @@ struct Renderer {
         if (dumping) std::fprintf(stderr, "gx dump: frame ends after %u draws\n", dumpIndex), dumping = false;
         flushVertices();
         fogOff();
-        C3D_FrameEnd(GX_CMDLIST_FLUSH);
+        endFrame();
         inFrame = false;
         if (smgAvSyncFramePending.exchange(false))
             std::fprintf(stderr, "av sync: the marked frame goes out %.1f ms after the mark\n",

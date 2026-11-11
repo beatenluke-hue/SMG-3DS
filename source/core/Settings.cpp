@@ -93,7 +93,7 @@ bool operator==(const Settings& a, const Settings& b) {
            a.previewGalaxy == b.previewGalaxy && a.previewScenario == b.previewScenario && a.devSkipStory == b.devSkipStory &&
            a.devGxDump == b.devGxDump && a.devGxNull == b.devGxNull && a.devGxTiming == b.devGxTiming &&
            a.devGxCheck == b.devGxCheck && a.devGxInline == b.devGxInline && a.devDrawEvery == b.devDrawEvery && a.devGxNoRaw == b.devGxNoRaw && a.devGxMips == b.devGxMips &&
-           a.devGxZones == b.devGxZones && a.devPerfLog == b.devPerfLog && a.devAvSync == b.devAvSync && a.devStartGalaxy == b.devStartGalaxy && a.devStartMario == b.devStartMario &&
+           a.devGxZones == b.devGxZones && a.devPerfLog == b.devPerfLog && a.perfGpuOverlap == b.perfGpuOverlap && a.perfMeshCull == b.perfMeshCull && a.perfMaxTexture == b.perfMaxTexture && a.devAvSync == b.devAvSync && a.devStartGalaxy == b.devStartGalaxy && a.devStartMario == b.devStartMario &&
            a.devStartZone == b.devStartZone &&
            a.devGalaxy == b.devGalaxy && a.devGalaxyScenario == b.devGalaxyScenario && a.devWarp == b.devWarp &&
            (!a.devWarp || (std::equal(a.devWarpTo, a.devWarpTo + 3, b.devWarpTo) && a.devWarpSeconds == b.devWarpSeconds));
@@ -149,6 +149,12 @@ Settings parseSettings(const std::string& text, Settings base) {
                  : key == "dev.perf_log" ? settings.devPerfLog
                  : key == "dev.av_sync" ? settings.devAvSync
                                           : settings.devSkipStory) = value == "1";
+        } else if (key == "perf.gpu_overlap" || key == "perf.mesh_cull") {
+            if (value == "0" || value == "1") (key == "perf.gpu_overlap" ? settings.perfGpuOverlap : settings.perfMeshCull) = value == "1";
+        } else if (key == "perf.max_texture") {
+            char* end = nullptr;
+            const long size = std::strtol(value.c_str(), &end, 10);
+            if (end && !*end && size >= 8 && size <= 1024 && !(size & (size - 1))) settings.perfMaxTexture = int(size);
         } else if (key.rfind("bind.", 0) == 0) {
             const int action = lookup(actionNames, key.substr(5));
             std::uint32_t keys;
@@ -180,6 +186,9 @@ std::string formatSettings(const Settings& settings) {
     if (settings.devGxMips) text += "dev.gx_mips=1\n";
     if (settings.devGxZones) text += "dev.gx_zones=1\n";
     if (settings.devPerfLog) text += "dev.perf_log=1\n";
+    if (!settings.perfGpuOverlap) text += "perf.gpu_overlap=0\n";
+    if (!settings.perfMeshCull) text += "perf.mesh_cull=0\n";
+    if (settings.perfMaxTexture != 256) text += "perf.max_texture=" + std::to_string(settings.perfMaxTexture) + "\n";
     if (settings.devStartMario >= 0)
         text += "dev.start=" + settings.devStartGalaxy + " " + std::to_string(settings.devStartMario) +
                 (settings.devStartZone.empty() ? "" : " " + settings.devStartZone) + "\n";

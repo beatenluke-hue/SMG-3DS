@@ -78,6 +78,9 @@ BOOL smgDevGxNoRaw() { return input().settings().devGxNoRaw; }
 BOOL smgDevGxMips() { return input().settings().devGxMips; }
 BOOL smgDevGxZones() { return input().settings().devGxZones; }
 BOOL smgDevPerfLog() { return input().settings().devPerfLog; }
+BOOL smgPerfGpuOverlap() { return input().settings().perfGpuOverlap; }
+BOOL smgPerfMeshCull() { return input().settings().perfMeshCull; }
+int smgPerfMaxTexture() { return input().settings().perfMaxTexture; }
 BOOL smgDevAvSync() { return input().settings().devAvSync; }
 // dev.start: the start point Mario takes in `galaxy`, or -1 for the game's own.
 int smgDevMarioStart(const char* galaxy) {
