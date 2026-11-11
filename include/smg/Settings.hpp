@@ -61,7 +61,7 @@ struct Settings {
     // Speed-ups, on unless set to 0. perf.gpu_overlap=0: the GPU starts on a frame only at its end, as before (each part
     // split off at an EFB copy otherwise runs at once). perf.mesh_cull=0: cached meshes wholly off the target are drawn
     // anyway.
-    bool perfGpuOverlap = true;
+    bool perfGpuOverlap = false;  // off: on a New 3DS it streaked vertices and broke up the sound (perf.gpu_overlap=1 to retry)
     bool perfMeshCull = true;
     // perf.max_texture=N (8-1024, a power of two): the game's textures wider or taller are halved, averaging each 2x2,
     // until they fit, for the PICA's small texture cache and the linear heap. 1024 keeps them all as they are.

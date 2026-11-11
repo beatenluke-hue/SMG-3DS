@@ -111,7 +111,7 @@ diagnostics, and `dev.galaxy` starts straight in a galaxy.
 
 | Line | Default | What it does |
 | --- | --- | --- |
-| `perf.gpu_overlap=0` | on | Runs each part of a frame on the GPU as it's split off (the old `docs/untested/gpu-overlap.diff`). Turn off if the console freezes. |
+| `perf.gpu_overlap=1` | off | Runs each part of a frame on the GPU as it's split off (the old `docs/untested/gpu-overlap.diff`). On a New 3DS it streaked vertices across the screen and broke up the sound. |
 | `perf.mesh_cull=0` | on | Skips cached meshes wholly off the screen. Turn off if level pieces vanish at the screen's edges. |
 | `perf.max_texture=N` | 256 | Halves larger textures until they fit. 1024 keeps them all. |
 | `perf.draw_distance=P` | 60 | Actors' far-clip distances, in percent of the game's. |

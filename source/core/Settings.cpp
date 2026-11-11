@@ -193,7 +193,7 @@ std::string formatSettings(const Settings& settings) {
     if (settings.devGxMips) text += "dev.gx_mips=1\n";
     if (settings.devGxZones) text += "dev.gx_zones=1\n";
     if (settings.devPerfLog) text += "dev.perf_log=1\n";
-    if (!settings.perfGpuOverlap) text += "perf.gpu_overlap=0\n";
+    if (settings.perfGpuOverlap) text += "perf.gpu_overlap=1\n";
     if (!settings.perfMeshCull) text += "perf.mesh_cull=0\n";
     if (settings.perfMaxTexture != 256) text += "perf.max_texture=" + std::to_string(settings.perfMaxTexture) + "\n";
     if (settings.perfDrawDistance != 60) text += "perf.draw_distance=" + std::to_string(settings.perfDrawDistance) + "\n";
