@@ -2187,7 +2187,10 @@ struct Renderer {
         keepTexgensSmall(mesh, u);
         if (dumping) dumpMesh(mesh, u);
         if (u.reject == 3) return;  // GX culls every triangle
-        if (offTarget(mesh, u)) return void(++perf.meshesCulled, perf.culledIndices += mesh.indexCount);
+        if (offTarget(mesh, u)) {
+            ++perf.meshesCulled, perf.culledIndices += mesh.indexCount;
+            return;
+        }
         slotUniforms(u);
         if (u.lit && lightingRowsEpoch != pipeline.lightingEpoch()) {  // the lighting's rows are made of nothing else
             lightingRowsEpoch = pipeline.lightingEpoch();
