@@ -1794,6 +1794,11 @@ adapt("src/Game/Scene/StageDataHolder.cpp", "Game/Scene/StageDataHolder.cpp", [
 # View matrices and material display lists a step makes are made again by the next before anything draws them when that
 # step draws nothing, so the frame loop leaves them out there (smgViewNeeded). The material controllers set values,
 # never add to them, so a step left out loses nothing.
+# perf.lod_distance: actors switch to their middle and low models nearer the camera (source/compat/Kpad.cpp).
+adapt("src/Game/LiveActor/LodCtrl.cpp", "Game/LiveActor/LodCtrl.cpp", [
+    ('#include "Game/LiveActor/LodCtrl.hpp"\n', '#include "Game/LiveActor/LodCtrl.hpp"\n\nextern "C" float smgPerfLodScale();\n', 1),
+    ("        f32 distance = calcDistanceToCamera();\n", "        f32 distance = calcDistanceToCamera() * smgPerfLodScale();\n", 1),
+])
 adapt("src/Game/LiveActor/ModelManager.cpp", "Game/LiveActor/ModelManager.cpp", [
     ('#include "Game/LiveActor/ModelManager.hpp"\n', '#include "Game/LiveActor/ModelManager.hpp"\n\nextern "C" bool smgViewNeeded;  // source/compat/GameScene.cpp\n', 1),
     ("void ModelManager::calcView() {\n    getJ3DModel()->viewCalc();",

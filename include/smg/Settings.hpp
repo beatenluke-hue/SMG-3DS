@@ -66,6 +66,16 @@ struct Settings {
     // perf.max_texture=N (8-1024, a power of two): the game's textures wider or taller are halved, averaging each 2x2,
     // until they fit, for the PICA's small texture cache and the linear heap. 1024 keeps them all as they are.
     int perfMaxTexture = 256;
+    // perf.draw_distance=P (10-100, percent): the far-clip distances actors are sorted into (the game's 50 to 600 m)
+    // scaled to P%; past theirs an actor is neither drawn nor moved. The map and actors clipped at the camera's own far
+    // plane keep it.
+    int perfDrawDistance = 60;
+    // perf.lod_distance=P (10-100, percent): actors with middle and low models switch to them at P% of the distance the
+    // game gives.
+    int perfLodDistance = 50;
+    // perf.shadow_distance=M (0-100 m, or -1 for the game's own): actors' shadows (not Mario's, a model of his own) end
+    // M meters from the camera; the game ends them at 40 m in the hubs only. 0 draws none.
+    int perfShadowDistance = 20;
     // For development only (dev.av_sync=1): every 90th drawn frame gets a white square and the audio a click at the
     // same moment, to measure the port's sound against its picture in a recording.
     bool devAvSync = false;

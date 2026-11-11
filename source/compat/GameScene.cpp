@@ -1,6 +1,9 @@
 // The two scene hooks the scene library's extracts call (tools/prepare-petari.py), answered for the whole game as its
 // own code answers them; native builds link the native scene's answers instead (source/compat/Scene.cpp).
 #include <Game/Map/CollisionDirector.hpp>
+#include <Game/LiveActor/ClippingDirector.hpp>
+#include <Game/LiveActor/ClippingJudge.hpp>
+#include <Game/LiveActor/ShadowController.hpp>
 #include <Game/Player/MarioActor.hpp>
 #include <Game/Player/MarioHolder.hpp>
 #include <Game/Scene/SceneObjHolder.hpp>
@@ -29,6 +32,27 @@ CollisionCode* getSceneCollisionCode() {
 }
 
 extern "C" BOOL smgDevWarp(float* to, int* seconds);  // source/compat/Kpad.cpp
+extern "C" int smgPerfDrawDistance();
+extern "C" int smgPerfShadowDistance();
+
+// perf.draw_distance and perf.shadow_distance, set each logic step before the scene moves (the scene's objects are
+// made again with each stage, at the game's own distances): the far-clip levels ClippingJudge's constructor gives,
+// scaled, and the shadows' far clip the hubs alone use, for every stage.
+extern "C" void smgPerfSceneStep() {
+    static const float levels[8] = {0.0f, 60000.0f, 50000.0f, 40000.0f, 30000.0f, 20000.0f, 10000.0f, 5000.0f};
+    static const float scale = float(smgPerfDrawDistance()) / 100.0f;
+    static const int shadowMeters = smgPerfShadowDistance();
+    if (!getSceneNameObjHolder()) return;
+    if (scale < 1.0f && MR::isExistSceneObj(SceneObj_ClippingDirector)) {
+        ClippingJudge* judge = MR::getClippingJudge();
+        if (judge)
+            for (int level = 1; level < 8; ++level) judge->mClipDistances[level] = levels[level] * scale;
+    }
+    if (shadowMeters >= 0 && MR::isExistSceneObj(SceneObj_ShadowControllerHolder)) {
+        ShadowControllerHolder* shadows = MR::getSceneObj< ShadowControllerHolder >(SceneObj_ShadowControllerHolder);
+        shadows->_24 = true, shadows->mFarClip = float(shadowMeters) * 100.0f;
+    }
+}
 
 // dev.warp: once a run, after the given seconds of play, counted in logic steps outside the file select (whose Mario is
 // a stand-in), movies and the scenario's opening. Demos count: some are played (Bowser's attack).

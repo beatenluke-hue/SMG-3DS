@@ -93,7 +93,8 @@ bool operator==(const Settings& a, const Settings& b) {
            a.previewGalaxy == b.previewGalaxy && a.previewScenario == b.previewScenario && a.devSkipStory == b.devSkipStory &&
            a.devGxDump == b.devGxDump && a.devGxNull == b.devGxNull && a.devGxTiming == b.devGxTiming &&
            a.devGxCheck == b.devGxCheck && a.devGxInline == b.devGxInline && a.devDrawEvery == b.devDrawEvery && a.devGxNoRaw == b.devGxNoRaw && a.devGxMips == b.devGxMips &&
-           a.devGxZones == b.devGxZones && a.devPerfLog == b.devPerfLog && a.perfGpuOverlap == b.perfGpuOverlap && a.perfMeshCull == b.perfMeshCull && a.perfMaxTexture == b.perfMaxTexture && a.devAvSync == b.devAvSync && a.devStartGalaxy == b.devStartGalaxy && a.devStartMario == b.devStartMario &&
+           a.devGxZones == b.devGxZones && a.devPerfLog == b.devPerfLog && a.perfGpuOverlap == b.perfGpuOverlap && a.perfMeshCull == b.perfMeshCull && a.perfMaxTexture == b.perfMaxTexture && a.perfDrawDistance == b.perfDrawDistance && a.perfLodDistance == b.perfLodDistance &&
+           a.perfShadowDistance == b.perfShadowDistance && a.devAvSync == b.devAvSync && a.devStartGalaxy == b.devStartGalaxy && a.devStartMario == b.devStartMario &&
            a.devStartZone == b.devStartZone &&
            a.devGalaxy == b.devGalaxy && a.devGalaxyScenario == b.devGalaxyScenario && a.devWarp == b.devWarp &&
            (!a.devWarp || (std::equal(a.devWarpTo, a.devWarpTo + 3, b.devWarpTo) && a.devWarpSeconds == b.devWarpSeconds));
@@ -155,6 +156,12 @@ Settings parseSettings(const std::string& text, Settings base) {
             char* end = nullptr;
             const long size = std::strtol(value.c_str(), &end, 10);
             if (end && !*end && size >= 8 && size <= 1024 && !(size & (size - 1))) settings.perfMaxTexture = int(size);
+        } else if (key == "perf.draw_distance" || key == "perf.lod_distance" || key == "perf.shadow_distance") {
+            char* end = nullptr;
+            const long amount = std::strtol(value.c_str(), &end, 10);
+            const bool shadow = key == "perf.shadow_distance";
+            if (end && !*end && !value.empty() && amount >= (shadow ? -1 : 10) && amount <= 100)
+                (key == "perf.draw_distance" ? settings.perfDrawDistance : key == "perf.lod_distance" ? settings.perfLodDistance : settings.perfShadowDistance) = int(amount);
         } else if (key.rfind("bind.", 0) == 0) {
             const int action = lookup(actionNames, key.substr(5));
             std::uint32_t keys;
@@ -189,6 +196,9 @@ std::string formatSettings(const Settings& settings) {
     if (!settings.perfGpuOverlap) text += "perf.gpu_overlap=0\n";
     if (!settings.perfMeshCull) text += "perf.mesh_cull=0\n";
     if (settings.perfMaxTexture != 256) text += "perf.max_texture=" + std::to_string(settings.perfMaxTexture) + "\n";
+    if (settings.perfDrawDistance != 60) text += "perf.draw_distance=" + std::to_string(settings.perfDrawDistance) + "\n";
+    if (settings.perfLodDistance != 50) text += "perf.lod_distance=" + std::to_string(settings.perfLodDistance) + "\n";
+    if (settings.perfShadowDistance != 20) text += "perf.shadow_distance=" + std::to_string(settings.perfShadowDistance) + "\n";
     if (settings.devStartMario >= 0)
         text += "dev.start=" + settings.devStartGalaxy + " " + std::to_string(settings.devStartMario) +
                 (settings.devStartZone.empty() ? "" : " " + settings.devStartZone) + "\n";

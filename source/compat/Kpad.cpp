@@ -81,6 +81,13 @@ BOOL smgDevPerfLog() { return input().settings().devPerfLog; }
 BOOL smgPerfGpuOverlap() { return input().settings().perfGpuOverlap; }
 BOOL smgPerfMeshCull() { return input().settings().perfMeshCull; }
 int smgPerfMaxTexture() { return input().settings().perfMaxTexture; }
+int smgPerfDrawDistance() { return input().settings().perfDrawDistance; }
+int smgPerfShadowDistance() { return input().settings().perfShadowDistance; }
+// perf.lod_distance as the factor LodCtrl's distances to the camera are multiplied by (tools/prepare-petari.py).
+float smgPerfLodScale() {
+    static const float scale = 100.0f / float(input().settings().perfLodDistance);  // asked by every LOD actor each step
+    return scale;
+}
 BOOL smgDevAvSync() { return input().settings().devAvSync; }
 // dev.start: the start point Mario takes in `galaxy`, or -1 for the game's own.
 int smgDevMarioStart(const char* galaxy) {
