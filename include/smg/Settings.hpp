@@ -55,6 +55,9 @@ struct Settings {
     // For development only (dev.gx_zones=1): the perf line shares out the render thread's time by what it was doing,
     // sampled from another core (smg/GxZones.hpp).
     bool devGxZones = false;
+    // For development only (dev.perf_log=1): the renderer's perf lines are also written to sdmc:/3ds/SMG-3DS/perf.log,
+    // whole, where the bottom screen shows only their last lines.
+    bool devPerfLog = false;
     // For development only (dev.av_sync=1): every 90th drawn frame gets a white square and the audio a click at the
     // same moment, to measure the port's sound against its picture in a recording.
     bool devAvSync = false;

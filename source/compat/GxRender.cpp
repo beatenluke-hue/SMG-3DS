@@ -21,6 +21,7 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -45,6 +46,30 @@ extern "C" int smgDevGxCheck();
 extern "C" int smgDevGxNoRaw();
 extern "C" int smgDevGxMips();
 extern "C" int smgDevGxZones();
+extern "C" int smgDevPerfLog();
+
+namespace {
+// The perf lines: to stderr as always, and with dev.perf_log=1 also appended to the SD card, flushed once per block.
+FILE* perfLogFile() {
+    static FILE* file = smgDevPerfLog() ? std::fopen("sdmc:/3ds/SMG-3DS/perf.log", "a") : nullptr;
+    return file;
+}
+[[gnu::format(printf, 1, 2)]] void perfPrint(const char* format, ...) {
+    va_list arguments;
+    va_start(arguments, format);
+    if (FILE* file = perfLogFile()) {
+        va_list copy;
+        va_copy(copy, arguments);
+        std::vfprintf(file, format, copy);
+        va_end(copy);
+    }
+    std::vfprintf(stderr, format, arguments);
+    va_end(arguments);
+}
+void perfLogFlush() {
+    if (FILE* file = perfLogFile()) std::fflush(file);
+}
+} // namespace
 extern "C" void (*smgGpuMemoryChanged)(const void* start, u32 size);  // source/compat/Os.cpp
 extern std::atomic<u32> smgDspTicks;                                  // source/compat/WiiAudio.cpp
 
@@ -2337,7 +2362,7 @@ struct Renderer {
         GxThreadClock& clock = gxThreadClock();
         const double tick = 1000.0 / SYSCLOCK_ARM11 / n;
         // t= is the emulated clock (drives time their actions by it when Azahar runs faster than real time).
-        std::fprintf(stderr, "gx perf: t=%.0f, %lu frames, %.1f ms/frame (%.1f fps, %.2f logic steps each); per logic step: game thread draw %.1f, "
+        perfPrint("gx perf: t=%.0f, %lu frames, %.1f ms/frame (%.1f fps, %.2f logic steps each); per logic step: game thread draw %.1f, "
                      "logic %.1f, animation %.1f, waiting for the GPU %.1f, retrace wait %.1f; per frame: GX stream read %s %.1f ms (%.1f of it waiting "
                      "for the PICA), game waiting for room %.1f ms, for the frame before %.1f ms, for all drawn %.1f ms; %.0f KB; DSP %.1f ms; %.0f primitives (%.0f same state, %.0f with only C0 new), %.0f "
                      "vertices, %.0f triangles, %.0f draws; depth peeks %.1f (%.1f answered from the frame before, %.2f ms); atlases %zu (%lu made), %.0f draws joined by them, %.0f turns\n",
@@ -2359,7 +2384,7 @@ struct Renderer {
             top += item;
             perf.changed[most - perf.changed] = 0;
         }
-        std::fprintf(stderr, "gx perf: GPU path %.0f draws (%.0f groups through citro3d), %.0f triangles, %.1f meshes made per frame (%zu kept, %.1f MB); draw states %zu kept, %lu clears; TEV programs compiled %.1f, "
+        perfPrint("gx perf: GPU path %.0f draws (%.0f groups through citro3d), %.0f triangles, %.1f meshes made per frame (%zu kept, %.1f MB); draw states %zu kept, %lu clears; TEV programs compiled %.1f, "
                      "movie frames decoded %.1f, display lists %.0f (%.0f bytes) per frame; %.1f MB linear free, %.1f MB of %.1f in the free store taken; state changes by BP register "
                      "(per frame):%s\n",
                      perf.meshDraws / n, perf.citroDraws / n, perf.meshTriangles / n, perf.meshesMade / n, meshes.size(), meshBytes / 1048576.0, states.size(),
@@ -2385,31 +2410,31 @@ struct Renderer {
         }
         if (perf.timed[0] | perf.timed[1] | perf.timed[2] | perf.timed[3] | perf.timed[4] | perf.timed[5]) {
             const double ms = 1000.0 / SYSCLOCK_ARM11 / n;
-            std::fprintf(stderr, "gx perf: renderer time per frame: CPU-path primitives %.1f ms immediate + %.1f ms in lists (%.0f vertices), display "
+            perfPrint("gx perf: renderer time per frame: CPU-path primitives %.1f ms immediate + %.1f ms in lists (%.0f vertices), display "
                          "lists %.1f ms, texture copies %.1f ms (%.1f CPU taking %.1f ms, %.1f GPU), frame end %.1f ms, movie %.1f ms\n", perf.timed[0] * ms,
                          perf.timed[4] * ms, perf.listVertices / n, perf.timed[1] * ms, perf.timed[2] * ms, perf.cpuCopies / n, perf.cpuCopyTicks * ms, perf.gpuCopies / n,
                          perf.timed[5] * ms, perf.timed[3] * ms);
-            std::fprintf(stderr, "gx perf: of which per frame: building states %.1f ms (%.0f), applying them %.1f ms (%.0f), preparing the vertex "
+            perfPrint("gx perf: of which per frame: building states %.1f ms (%.0f), applying them %.1f ms (%.0f), preparing the vertex "
                          "pipeline %.1f ms (%.0f); building: reading GX %.1f ms (%.0f cached, %.0f read), stats %.1f ms, pixel state %.1f ms\n",
                          perf.stepTicks[0] * ms, perf.steps[0] / n, perf.stepTicks[1] * ms, perf.steps[1] / n, perf.stepTicks[2] * ms, perf.steps[2] / n,
                          perf.stepTicks[3] * ms, perf.stateHits / n, perf.stateMisses / n, perf.stepTicks[4] * ms, perf.stepTicks[5] * ms);
-            std::fprintf(stderr, "gx perf: and: CPU-path vertices %.1f ms (%.0f calls), CPU-path draws %.1f ms (%.0f); mesh lookups %.1f ms (%.0f), "
+            perfPrint("gx perf: and: CPU-path vertices %.1f ms (%.0f calls), CPU-path draws %.1f ms (%.0f); mesh lookups %.1f ms (%.0f), "
                          "uniforms %.1f ms (%.0f), draw calls %.1f ms (%.0f), first-use textures %.1f ms (%.1f)\n", perf.stepTicks[6] * ms,
                          perf.steps[6] / n, perf.stepTicks[7] * ms, perf.steps[7] / n, perf.stepTicks[8] * ms, perf.steps[8] / n, perf.stepTicks[9] * ms,
                          perf.steps[9] / n, perf.stepTicks[10] * ms, perf.steps[10] / n, perf.stepTicks[11] * ms, perf.steps[11] / n);
-            std::fprintf(stderr, "gx perf: meshes made: %.1f ms (%.1f, %.0f vertices)\n", perf.stepTicks[12] * ms, perf.steps[12] / n,
+            perfPrint("gx perf: meshes made: %.1f ms (%.1f, %.0f vertices)\n", perf.stepTicks[12] * ms, perf.steps[12] / n,
                          perf.meshVerticesMade / n);
             const u32* counts = lastGpu->commandCounts;
             const u32* bytes = lastGpu->commandBytes;
-            std::fprintf(stderr, "gx perf: commands per frame (count/KB): BP %.0f/%.0f, CP %.0f/%.0f, XF %.0f/%.0f, XF indexed %.0f/%.0f, list calls %.0f/%.0f, "
+            perfPrint("gx perf: commands per frame (count/KB): BP %.0f/%.0f, CP %.0f/%.0f, XF %.0f/%.0f, XF indexed %.0f/%.0f, list calls %.0f/%.0f, "
                          "primitives %.0f/%.0f, other %.0f/%.0f\n", counts[0] / n, bytes[0] / n / 1024, counts[1] / n, bytes[1] / n / 1024, counts[2] / n,
                          bytes[2] / n / 1024, counts[3] / n, bytes[3] / n / 1024, counts[4] / n, bytes[4] / n / 1024, counts[5] / n, bytes[5] / n / 1024,
                          counts[6] / n, bytes[6] / n / 1024);
             const u32* why = perf.pendingWhy;
-            std::fprintf(stderr, "gx perf: mesh draws through citro3d after a change of: combiner %.0f, fragment ops %.0f, cull %.0f, scissor %.0f, "
+            perfPrint("gx perf: mesh draws through citro3d after a change of: combiner %.0f, fragment ops %.0f, cull %.0f, scissor %.0f, "
                          "textures %.0f, fixed attributes %.0f, CPU-path buffers %.0f, mesh layout %.0f, fog %.0f, command list %.0f\n", why[0] / n,
                          why[1] / n, why[2] / n, why[3] / n, why[4] / n, why[5] / n, why[6] / n, why[7] / n, why[8] / n, why[9] / n);
-            std::fprintf(stderr, "gx perf: pipeline per frame: %.0f prepares read whole, %.0f folds made, %.0f lighting reads, %.1f triangles cut at the "
+            perfPrint("gx perf: pipeline per frame: %.0f prepares read whole, %.0f folds made, %.0f lighting reads, %.1f triangles cut at the "
                          "near plane; vertex layouts %.0f read, "
                          "%.0f reused; unfolded texgen vertices: matrix the position's %.0f, its pair %.0f, another %.0f, the last again %.0f, normalized %.0f\n",
                          pipeline.fullPrepares / n, pipeline.foldsMade / n, pipeline.lightingReads / n, pipeline.trianglesCut / n, lastGpu->layoutsRead / n,
@@ -2424,22 +2449,22 @@ struct Renderer {
         std::string approximations;
         for (const auto& [why, count] : perf.approximated)
             if (why) approximations += std::string(approximations.empty() ? " " : ", ") + why + " " + std::to_string(count);
-        if (!approximations.empty()) std::fprintf(stderr, "gx perf: new draw states approximated:%s\n", approximations.c_str());
+        if (!approximations.empty()) perfPrint("gx perf: new draw states approximated:%s\n", approximations.c_str());
         std::string listed;
         for (unsigned why = 0; why < GxVertexPipeline::MeshRefusals; ++why)
             if (perf.refusedVertices[why]) listed += " " + std::to_string(why) + ":" + std::to_string(unsigned(perf.refusedVertices[why] / n));
-        std::fprintf(stderr, "gx perf: CPU-path vertices in lists refused by reason (per frame):%s\n", listed.c_str());
+        perfPrint("gx perf: CPU-path vertices in lists refused by reason (per frame):%s\n", listed.c_str());
         if (perf.meshesChecked || perf.refreshesChecked)
-            std::fprintf(stderr, "gx perf: meshes checked %lu, differing %lu; refreshes checked %lu, differing %lu, repeating the last %lu, from arrays already refreshed this frame %lu\n",
+            perfPrint("gx perf: meshes checked %lu, differing %lu; refreshes checked %lu, differing %lu, repeating the last %lu, from arrays already refreshed this frame %lu\n",
                          static_cast<unsigned long>(perf.meshesChecked), static_cast<unsigned long>(perf.meshesDiffering), static_cast<unsigned long>(perf.refreshesChecked),
                          static_cast<unsigned long>(perf.refreshesDiffering), static_cast<unsigned long>(perf.refreshesRepeated), static_cast<unsigned long>(perf.refreshesAgain));
-        std::fprintf(stderr, "gx perf: display lists refused by reason (per frame):%s; meshes invalidated %.1f, overflows %.1f, over budget %.1f, "
+        perfPrint("gx perf: display lists refused by reason (per frame):%s; meshes invalidated %.1f, overflows %.1f, over budget %.1f, "
                      "evicted %.1f, drops for room %lu, key mismatches %.1f, refreshed %.1f (%.0f vertices), primitives left out %.1f, pass draws %.1f, flushes queued %.1f; GX FIFO writes %.0f per frame; textures %zu, %lu invalidated\n", refusals.c_str(),
                      perf.meshInvalidated / n, perf.meshOverflows / n, perf.meshBudgetDrops / n, perf.meshesEvicted / n, static_cast<unsigned long>(perf.meshesDroppedForRoom), perf.meshMismatches / n, perf.meshesRefreshed / n,
                      perf.meshVerticesRefreshed / n, perf.leftOutDraws / n, perf.passDraws / n, perf.flushesQueued / n,
                      (smgFifoWrites - perf.writesBefore) / n, textures.size(), static_cast<unsigned long>(perf.texturesInvalidated));
         if (perf.meshMismatches)
-            std::fprintf(stderr, "gx perf: key mismatches by what changed (per frame): key %.1f, descriptor %.1f, format table %.1f, array base %.1f, "
+            perfPrint("gx perf: key mismatches by what changed (per frame): key %.1f, descriptor %.1f, format table %.1f, array base %.1f, "
                          "stride %.1f\n", perf.mismatchWhy[0] / n, perf.mismatchWhy[1] / n, perf.mismatchWhy[2] / n, perf.mismatchWhy[3] / n,
                          perf.mismatchWhy[4] / n);
         u32 zoneSamples[ZoneCount], zoneTotal = 0;
@@ -2453,12 +2478,13 @@ struct Renderer {
                 std::snprintf(item, sizeof item, "%s %s %.2f", zones.empty() ? "" : ",", gxZoneName(z), ms / n * zoneSamples[z] / zoneTotal);
                 zones += item;
             }
-            std::fprintf(stderr, "gx perf: render thread zones, ms per frame (%lu samples):%s\n", static_cast<unsigned long>(zoneTotal), zones.c_str());
+            perfPrint("gx perf: render thread zones, ms per frame (%lu samples):%s\n", static_cast<unsigned long>(zoneTotal), zones.c_str());
         }
         unsigned long long gameWaits = 0, otherWaits = 0;
         smgCpuWaits(&gameWaits, &otherWaits);
-        std::fprintf(stderr, "gx perf: waits to turn interrupts off, per frame: the game's thread %.2f ms, the others %.2f ms\n",
+        perfPrint("gx perf: waits to turn interrupts off, per frame: the game's thread %.2f ms, the others %.2f ms\n",
                      gameWaits * 1000.0 / SYSCLOCK_ARM11 / n, otherWaits * 1000.0 / SYSCLOCK_ARM11 / n);
+        perfLogFlush();
         perf = Perf{};
         perf.since = now, perf.listsBefore = lastGpu->displayListCalls, perf.listBytesBefore = lastGpu->displayListBytes;
     }
@@ -2542,7 +2568,7 @@ struct Renderer {
             perf.cpuCopyTicks += svcGetSystemTick() - start;
             static unsigned noted = 0;
             if (dumping || noted++ < 4)
-                std::fprintf(stderr, "gx perf: CPU %scopy (%u,%u %ux%u) to 0x%08lx format %u took %.2f ms\n", copy.depth ? "depth " : "", copy.x, copy.y,
+                perfPrint("gx perf: CPU %scopy (%u,%u %ux%u) to 0x%08lx format %u took %.2f ms\n", copy.depth ? "depth " : "", copy.x, copy.y,
                              copy.width, copy.height, static_cast<unsigned long>(copy.address), copy.format,
                              double(svcGetSystemTick() - start) * 1000.0 / SYSCLOCK_ARM11);
         }
